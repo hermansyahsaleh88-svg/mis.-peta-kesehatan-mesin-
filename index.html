@@ -753,7 +753,7 @@ const hasCloudStorage = (typeof window.storage !== "undefined" && window.storage
 // Firebase yang sama tanpa perlu setting manual satu-satu. Kalau belum ada,
 // nilainya null dan setiap Admin perlu menyambungkan manual sekali per browser
 // lewat menu Sinkronisasi Data (tersimpan di localStorage browser itu saja).
-const DEFAULT_FIREBASE_CONFIG = null;
+const DEFAULT_FIREBASE_CONFIG = {"apiKey": "AIzaSyC3D-GAOyqXj7H13XPJnScC9newMy9tYbY", "authDomain": "peta-kesehatan-mesin.firebaseapp.com", "databaseURL": "https://peta-kesehatan-mesin-default-rtdb.asia-southeast1.firebasedatabase.app", "projectId": "peta-kesehatan-mesin", "storageBucket": "peta-kesehatan-mesin.firebasestorage.app", "messagingSenderId": "450329106667", "appId": "1:450329106667:web:4d26fe2fc9cfa1dc2b86ae"};
 let fbApp = null;      // instance Firebase App
 let fbDbRef = null;    // ref ke node "pkm-data" di Realtime Database
 let fbConfig = null;
