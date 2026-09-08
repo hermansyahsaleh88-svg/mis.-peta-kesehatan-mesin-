@@ -959,7 +959,7 @@ function initFirebaseApp(config){
    perlu kartu kredit (beda dengan Firebase Storage yang sekarang wajib
    paket Blaze berbayar).
    ============================================================ */
-const DEFAULT_DRIVE_URL = null;
+const DEFAULT_DRIVE_URL = "https://script.google.com/macros/s/AKfycbzfhbf_VtSw1D8eC9XUh-OVXtFPkow4jVm4Vv4aW0IvCtDIQGdhcEI5Tu5qJG8UN7Ft/exec";
 let driveUrl = "";
 try{ driveUrl = localStorage.getItem("pkm-drive-url") || ""; }catch(e){ driveUrl = ""; }
 if(!driveUrl && DEFAULT_DRIVE_URL) driveUrl = DEFAULT_DRIVE_URL;
