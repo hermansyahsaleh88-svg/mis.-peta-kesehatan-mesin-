@@ -1005,7 +1005,7 @@ function initFirebaseApp(config){
    perlu kartu kredit (beda dengan Firebase Storage yang sekarang wajib
    paket Blaze berbayar).
    ============================================================ */
-const DEFAULT_DRIVE_URL = "https://script.google.com/macros/s/AKfycbzfhbf_VtSw1D8eC9XUh-OVXtFPkow4jVm4Vv4aW0IvCtDIQGdhcEI5Tu5qJG8UN7Ft/exec";
+const DEFAULT_DRIVE_URL = "https://script.google.com/macros/s/AKfycbybcPn8tE8fqAPXxe3bs6pM3QRpcbDhDLC108NbyxRdAtvQCsvkcvPS_72O7FljSWxt/exec";
 let driveUrl = "";
 try{ driveUrl = localStorage.getItem("pkm-drive-url") || ""; }catch(e){ driveUrl = ""; }
 if(!driveUrl && DEFAULT_DRIVE_URL) driveUrl = DEFAULT_DRIVE_URL;
@@ -1045,6 +1045,95 @@ async function driveDeleteFile(fileId){
     });
     await res.json();
   }catch(e){ console.warn("Gagal hapus file di Google Drive:", e); }
+}
+
+/* ============================================================
+   MIGRASI FILE ANTAR-AKUN GOOGLE DRIVE (admin)
+   Dipakai kalau lokasi penyimpanan Drive dipindah ke akun Google lain.
+   Cara kerja: file diambil (export) dari deployment Apps Script LAMA
+   (masih harus aktif/reachable), lalu diunggah ke deployment BARU yang
+   sedang tersambung sekarang. File lama TIDAK dihapus, dibiarkan sebagai
+   cadangan.
+   ============================================================ */
+async function driveExportFile(oldUrl, fileId){
+  const res = await fetch(oldUrl, {
+    method: "POST",
+    headers: {"Content-Type": "text/plain;charset=utf-8"},
+    body: JSON.stringify({action:"export", fileId})
+  });
+  if(!res.ok) throw new Error("HTTP " + res.status);
+  const json = await res.json();
+  if(!json || json.success !== true) throw new Error(json && json.error ? json.error : "Export dari Drive lama gagal");
+  return json; // {success, fileName, mimeType, base64Data}
+}
+
+async function driveUploadBase64(folderPath, fileName, mimeType, base64Data){
+  if(!driveUrl) throw new Error("Google Drive (tujuan) belum tersambung.");
+  const res = await fetch(driveUrl, {
+    method: "POST",
+    headers: {"Content-Type": "text/plain;charset=utf-8"},
+    body: JSON.stringify({action:"upload", folder: folderPath, fileName, mimeType, base64Data})
+  });
+  if(!res.ok) throw new Error("HTTP " + res.status);
+  const json = await res.json();
+  if(!json || json.success !== true) throw new Error(json && json.error ? json.error : "Upload ke Drive baru gagal");
+  return json; // {success, fileId, fileUrl, thumbnailUrl, downloadUrl}
+}
+
+async function migrateFilesToNewDrive(oldUrlInput){
+  const oldUrl = (oldUrlInput||"").trim();
+  if(!oldUrl){ showToast("URL Web App Drive lama tidak boleh kosong.", true); return; }
+  if(!driveUrl){ showToast("Sambungkan Drive tujuan (baru) terlebih dahulu di atas.", true); return; }
+
+  const manualJobs = DB.manuals.filter(m=>m.driveFileId).map(m=>({type:"manual", ref:m}));
+  const fotoJobs = [];
+  DB.assessments.forEach(a=>{ (a.fotos||[]).forEach(f=>{ if(f.driveFileId) fotoJobs.push({type:"foto", ref:f, parent:a}); }); });
+  const jobs = manualJobs.concat(fotoJobs);
+  const total = jobs.length;
+
+  const btn = document.getElementById("btnStartFileMigration");
+  const progressEl = document.getElementById("fileMigrationProgress");
+  if(!total){
+    if(progressEl) progressEl.textContent = "Tidak ada file yang perlu dimigrasi (belum ada dokumen/foto tersimpan).";
+    return;
+  }
+  if(!confirm("Migrasi "+total+" file dari Drive lama ke Drive yang sedang tersambung sekarang? Proses ini bisa makan waktu beberapa menit tergantung jumlah & ukuran file.")) return;
+
+  if(btn) btn.disabled = true;
+  let done = 0, failed = 0;
+  let manualsChanged = false, assessmentsChanged = false;
+
+  for(const job of jobs){
+    if(progressEl) progressEl.textContent = "Memindahkan file "+(done+failed+1)+" dari "+total+"...";
+    try{
+      const exported = await driveExportFile(oldUrl, job.ref.driveFileId);
+      const folder = job.type==="manual" ? "manuals" : "assessment-photos/"+job.parent.id;
+      const uploaded = await driveUploadBase64(folder, exported.fileName, exported.mimeType, exported.base64Data);
+      if(job.type==="manual"){
+        job.ref.driveFileId = uploaded.fileId;
+        job.ref.fileUrl = uploaded.fileUrl;
+        job.ref.downloadUrl = uploaded.downloadUrl;
+        manualsChanged = true;
+      } else {
+        job.ref.driveFileId = uploaded.fileId;
+        job.ref.url = uploaded.fileUrl;
+        job.ref.thumbUrl = uploaded.thumbnailUrl;
+        assessmentsChanged = true;
+      }
+      done++;
+    }catch(e){
+      console.error("Gagal migrasi file:", job.ref, e);
+      failed++;
+    }
+  }
+
+  if(manualsChanged) await persist("pkm-manuals-v1", DB.manuals);
+  if(assessmentsChanged) await persist("pkm-assessments-v1", DB.assessments);
+
+  if(progressEl) progressEl.textContent = "Selesai: "+done+" berhasil, "+failed+" gagal, dari "+total+" file total. File lama tetap ada di Drive lama sebagai cadangan.";
+  if(btn) btn.disabled = false;
+  showToast(failed ? (done+" file berhasil, "+failed+" gagal - cek console untuk detail.") : "Semua "+done+" file berhasil dimigrasi ke Drive baru.", !!failed);
+  renderManualList();
 }
 
 function connectDrive(urlInput){
@@ -2706,6 +2795,10 @@ const FIREBASE_RULES_JSON = `{
   }
 }`;
 
+// URL deployment Drive lama yang pernah dipakai - dipra-isi di kolom migrasi
+// supaya Admin tidak perlu cari-cari lagi. Kosongkan/ganti manual kalau beda.
+const KNOWN_OLD_DRIVE_URL = "https://script.google.com/macros/s/AKfycbzfhbf_VtSw1D8eC9XUh-OVXtFPkow4jVm4Vv4aW0IvCtDIQGdhcEI5Tu5qJG8UN7Ft/exec";
+
 const DRIVE_APPS_SCRIPT_CODE = `/**
  * PETA KESEHATAN MESIN DIESEL - Backend penyimpanan file (Google Drive)
  * -----------------------------------------------------------------------
@@ -2739,10 +2832,31 @@ function doPost(e) {
       return jsonResponse_(uploadFile_(body));
     } else if (body.action === 'delete') {
       return jsonResponse_(deleteFile_(body.fileId));
+    } else if (body.action === 'export') {
+      return jsonResponse_(exportFile_(body.fileId));
     }
     return jsonResponse_({ success: false, error: 'Aksi tidak dikenal' });
   } catch (err) {
     return jsonResponse_({ success: false, error: String(err) });
+  }
+}
+
+function exportFile_(fileId) {
+  // Dipakai untuk migrasi file ke akun Drive lain: baca file dari Drive
+  // akun ini dan kembalikan isinya sebagai base64, supaya bisa diunggah
+  // ulang ke deployment Apps Script lain (di akun Google berbeda).
+  if (!fileId) return { success: false, error: 'fileId kosong' };
+  try {
+    var file = DriveApp.getFileById(fileId);
+    var blob = file.getBlob();
+    return {
+      success: true,
+      fileName: file.getName(),
+      mimeType: blob.getContentType(),
+      base64Data: Utilities.base64Encode(blob.getBytes())
+    };
+  } catch (err) {
+    return { success: false, error: String(err) };
   }
 }
 
@@ -2866,6 +2980,15 @@ function renderSyncView(){
       '<button class="btn btn-primary" id="btnConnectDrive">Sambungkan</button>'+
     '</div>'+
 
+    '<div class="card" style="margin-bottom:20px;">'+
+      '<div class="eyebrow" style="margin-bottom:10px;">Migrasi File dari Akun Drive Lain</div>'+
+      '<div style="font-size:11.5px;color:var(--text-dim);margin-bottom:14px;">Pindahkan semua dokumen &amp; foto yang sudah tersimpan di akun Google Drive LAMA ke akun yang sedang tersambung di atas. File lama tidak dihapus, tetap ada sebagai cadangan. Deployment Apps Script LAMA harus masih aktif/bisa diakses supaya ini berjalan.</div>'+
+      '<div class="field"><label>URL Web App Google Drive LAMA</label>'+
+        '<input type="text" id="oldDriveUrlInput" placeholder="https://script.google.com/macros/s/xxxxx/exec" value="'+esc(KNOWN_OLD_DRIVE_URL)+'"></div>'+
+      '<button class="btn btn-primary" id="btnStartFileMigration">Mulai Migrasi</button>'+
+      '<div id="fileMigrationProgress" style="font-size:12px;color:var(--text-dim);margin-top:10px;"></div>'+
+    '</div>'+
+
     '<div class="card">'+
       '<div class="eyebrow" style="margin-bottom:12px;">Panduan Setup Google Drive (untuk File - sekali saja)</div>'+
       '<ol style="font-size:13px;line-height:1.9;color:var(--text-dim);padding-left:18px;margin:0 0 18px 0;">'+
@@ -2899,6 +3022,9 @@ function renderSyncView(){
   });
   document.getElementById("btnConnectDrive").addEventListener("click", ()=>{
     connectDrive(document.getElementById("driveUrlInput").value);
+  });
+  document.getElementById("btnStartFileMigration").addEventListener("click", ()=>{
+    migrateFilesToNewDrive(document.getElementById("oldDriveUrlInput").value);
   });
   document.getElementById("btnCopyDriveScript").addEventListener("click", async ()=>{
     try{
