@@ -841,6 +841,52 @@ async function migrateAutoFields(){
 }
 
 /* ============================================================
+   PERBAIKAN URL GOOGLE DRIVE LAMA
+   Format "uc?export=view" yang dipakai versi awal fitur ini sudah tidak
+   didukung Google untuk tampil sebagai <img> sejak awal 2024. File yang
+   sudah terlanjur diupload dengan format lama diperbaiki otomatis di sini
+   (diregenerasi jadi format thumbnail/view/download yang benar), tanpa
+   perlu upload ulang manual.
+   ============================================================ */
+function extractDriveFileId(url){
+  if(!url) return null;
+  const m = url.match(/[?&]id=([a-zA-Z0-9_-]+)/) || url.match(/\/d\/([a-zA-Z0-9_-]+)/);
+  return m ? m[1] : null;
+}
+function buildDriveUrls(fileId){
+  return {
+    fileUrl: "https://drive.google.com/file/d/"+fileId+"/view",
+    thumbnailUrl: "https://drive.google.com/thumbnail?id="+fileId+"&sz=w1000",
+    downloadUrl: "https://drive.google.com/uc?export=download&id="+fileId
+  };
+}
+async function migrateDriveUrls(){
+  let manualsChanged = false;
+  DB.manuals.forEach(m=>{
+    const fid = m.driveFileId || extractDriveFileId(m.fileUrl);
+    if(fid && (!m.downloadUrl || (m.fileUrl||"").indexOf("uc?export=view")!==-1)){
+      const urls = buildDriveUrls(fid);
+      m.driveFileId = fid; m.fileUrl = urls.fileUrl; m.downloadUrl = urls.downloadUrl;
+      manualsChanged = true;
+    }
+  });
+  let assessmentsChanged = false;
+  DB.assessments.forEach(a=>{
+    if(!a.fotos || !a.fotos.length) return;
+    a.fotos.forEach(f=>{
+      const fid = f.driveFileId || extractDriveFileId(f.url);
+      if(fid && (!f.thumbUrl || (f.url||"").indexOf("uc?export=view")!==-1)){
+        const urls = buildDriveUrls(fid);
+        f.driveFileId = fid; f.url = urls.fileUrl; f.thumbUrl = urls.thumbnailUrl;
+        assessmentsChanged = true;
+      }
+    });
+  });
+  if(manualsChanged) await persist("pkm-manuals-v1", DB.manuals);
+  if(assessmentsChanged) await persist("pkm-assessments-v1", DB.assessments);
+}
+
+/* ============================================================
    PERBAIKAN NO. COST CENTER (data lama sempat salah/tergeser)
    Referensi resmi di bawah dicocokkan lewat NO. SERI MESIN (lebih stabil
    drpd cost center), lalu cost_center + kondisi_mesin + jenis_overhaul +
@@ -2109,7 +2155,7 @@ async function saveAssessment(){
         const file = pendingAssessmentPhotos[i];
         try{
           const result = await driveUploadFile(file, "assessment-photos/"+record.id);
-          record.fotos.push({url: result.fileUrl, fileName: file.name, driveFileId: result.fileId});
+          record.fotos.push({url: result.fileUrl, thumbUrl: result.thumbnailUrl, fileName: file.name, driveFileId: result.fileId});
         }catch(e){
           console.error("Gagal unggah foto:", e);
           showToast('Gagal unggah foto "'+file.name+'": '+(e.message||e), true);
@@ -2314,7 +2360,7 @@ function renderReportPaper(){
       '<table><thead><tr><th>No</th><th>Kategori</th><th>Parameter</th><th>Bobot</th><th>Skor</th><th>Catatan</th></tr></thead><tbody>'+detailRows+'</tbody></table>'+
       (a.fotos && a.fotos.length ?
         '<div style="font-size:11px;color:#5c6b78;text-transform:uppercase;letter-spacing:.3px;margin:16px 0 8px 0;">Dokumentasi Foto Mesin</div>'+
-        '<div class="report-photo-grid">'+a.fotos.map(f=>'<a href="'+esc(f.url)+'" target="_blank" rel="noopener"><img src="'+esc(f.url)+'" alt="'+esc(f.fileName)+'"></a>').join("")+'</div>'
+        '<div class="report-photo-grid">'+a.fotos.map(f=>'<a href="'+esc(f.url)+'" target="_blank" rel="noopener"><img src="'+esc(f.thumbUrl||f.url)+'" alt="'+esc(f.fileName)+'" loading="lazy"></a>').join("")+'</div>'
         : '')+
       '<div class="rp-sign">'+
         '<div class="sbox">'+
@@ -2380,7 +2426,7 @@ function renderManualList(){
       '<div class="mc-meta">'+sizeKb+(sizeKb?' &middot; ':'')+'Diunggah '+fmtDate((m.uploadedAt?new Date(m.uploadedAt):new Date()).toISOString().slice(0,10))+' oleh '+esc(m.uploadedBy?.nama||"-")+'</div>'+
       '<div class="mc-actions">'+
         '<a class="btn btn-sm" href="'+esc(m.fileUrl)+'" target="_blank" rel="noopener">👁 Lihat</a>'+
-        '<a class="btn btn-sm" href="'+esc(m.fileUrl)+'" target="_blank" rel="noopener" download="'+esc(m.fileName)+'">⬇ Unduh</a>'+
+        '<a class="btn btn-sm" href="'+esc(m.downloadUrl||m.fileUrl)+'" target="_blank" rel="noopener">⬇ Unduh</a>'+
         (canManage ? '<button class="btn btn-sm btn-danger" onclick="deleteManual(\''+m.id+'\')">Hapus</button>' : '')+
       '</div>'+
     '</div>';
@@ -2466,6 +2512,7 @@ async function submitManualUpload(){
       id, jenis, merk, tipe,
       fileName: pendingManualFile.name,
       fileUrl: result.fileUrl,
+      downloadUrl: result.downloadUrl,
       driveFileId: result.fileId,
       fileSize: pendingManualFile.size,
       uploadedBy: {nama: currentUser.nama, jabatan: currentUser.jabatan, role: currentUser.role},
@@ -2679,6 +2726,12 @@ const DRIVE_APPS_SCRIPT_CODE = `/**
  * Folder "PetaKesehatanMesin_Files" akan dibuat otomatis di Drive akun
  * ini saat upload pertama kali dilakukan.
  */
+function doGet(e) {
+  // Dipakai untuk cek cepat dari browser: buka URL exec-nya langsung.
+  // Kalau ini muncul, artinya deployment sudah bisa dijangkau dengan benar.
+  return jsonResponse_({ status: 'ok', message: 'Peta Kesehatan Mesin - Drive backend aktif.' });
+}
+
 function doPost(e) {
   try {
     var body = JSON.parse(e.postData.contents);
@@ -2717,10 +2770,16 @@ function uploadFile_(body) {
   var file = folder.createFile(blob);
   file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
   var fileId = file.getId();
+  // "uc?export=view" sudah tidak didukung Google untuk ditampilkan langsung
+  // sebagai <img> sejak awal 2024 - dipakai kombinasi: thumbnail (untuk
+  // ditampilkan inline), file/d/.../view (untuk dibuka penuh), dan
+  // uc?export=download (untuk tombol unduh).
   return {
     success: true,
     fileId: fileId,
-    fileUrl: 'https://drive.google.com/uc?export=view&id=' + fileId
+    fileUrl: 'https://drive.google.com/file/d/' + fileId + '/view',
+    thumbnailUrl: 'https://drive.google.com/thumbnail?id=' + fileId + '&sz=w1000',
+    downloadUrl: 'https://drive.google.com/uc?export=download&id=' + fileId
   };
 }
 
@@ -2863,6 +2922,7 @@ function renderSyncView(){
   }
   await loadDB();
   await migrateCostCenterAndOverhaulData();
+  await migrateDriveUrls();
   await migrateAutoFields();
   populateLokasiFilter();
 })();
