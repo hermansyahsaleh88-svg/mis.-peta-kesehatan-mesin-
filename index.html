@@ -368,6 +368,19 @@ tbody tr:hover{background:var(--panel-alt);}
 .upload-progress-bar{height:6px;background:var(--bg);border-radius:4px;overflow:hidden;margin-top:10px;display:none;}
 .upload-progress-bar .fill{height:100%;background:var(--accent);width:0%;transition:width .2s;}
 
+/* ---------- Foto Mesin (Penilaian & Laporan) ---------- */
+.photo-preview-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:10px;margin-top:12px;}
+.photo-thumb{position:relative;border-radius:8px;overflow:hidden;aspect-ratio:1;border:1px solid var(--border-soft);background:var(--bg);}
+.photo-thumb img{width:100%;height:100%;object-fit:cover;display:block;}
+.photo-thumb-remove{
+  position:absolute;top:4px;right:4px;width:20px;height:20px;border-radius:50%;border:none;
+  background:rgba(0,0,0,.65);color:#fff;font-size:14px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;
+}
+.photo-thumb-remove:hover{background:var(--kritis);}
+.report-photo-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin:10px 0 18px 0;}
+.report-photo-grid a{display:block;border-radius:6px;overflow:hidden;border:1px solid #d3dbe2;aspect-ratio:1;}
+.report-photo-grid img{width:100%;height:100%;object-fit:cover;display:block;}
+
 /* ---------- Modal ---------- */
 .modal-overlay{
   position:fixed;inset:0;background:rgba(6,10,14,.72);backdrop-filter:blur(2px);
@@ -894,6 +907,7 @@ let dashLocFilter = "";
 let editingUnitId = null;
 let editingUserUsername = null;
 let currentAssessDraft = null; // {unitId, scores:{}, notes:{}}
+let pendingAssessmentPhotos = []; // File[] foto mesin yang belum diupload, dipilih sebelum "Simpan Penilaian"
 let chartStatusInst = null, chartCatInst = null;
 
 /* ============================================================
@@ -1736,6 +1750,7 @@ function renderAssessForm(){
     scores: latest ? {...latest.scores} : {},
     notes: latest ? {...(latest.notes||{})} : {}
   };
+  pendingAssessmentPhotos = [];
 
   const byCat = paramsByCategory();
   const history = getAssessmentHistory(unitId);
@@ -1759,6 +1774,18 @@ function renderAssessForm(){
 
   const histHtml = history.length ? history.map(h=> renderHistItem(h)).join("") : '<div class="empty-state" style="padding:20px;">Belum ada riwayat penilaian untuk unit ini.</div>';
 
+  const photoUploadHtml = canInput ? (
+    '<div class="section-title"><h3>Foto Mesin</h3></div>'+
+    '<div style="font-size:11.5px;color:var(--text-dim);margin-bottom:10px;">Opsional - maks. 6 foto, 5 MB per foto. Foto akan ikut tampil di halaman Laporan setelah penilaian disimpan.</div>'+
+    '<div class="dropzone" id="photoDropzone">'+
+      '<input type="file" id="assessPhotoInput" accept="image/*" multiple style="display:none;">'+
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>'+
+      '<div class="dz-text">Seret foto ke sini, atau klik untuk pilih file</div>'+
+      '<div class="dz-sub">JPG/PNG, maks. 6 foto, 5 MB per foto</div>'+
+    '</div>'+
+    '<div class="photo-preview-grid" id="photoPreviewGrid"></div>'
+  ) : "";
+
   area.innerHTML =
     '<div style="margin:18px 0 14px 0;padding:14px 16px;background:var(--panel);border:1px solid var(--border-soft);border-radius:10px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;">'+
       '<div><b>'+esc(u.nama_unit)+'</b> &middot; <span class="mono" style="color:var(--text-dim)">'+esc(u.merk_tipe)+'</span></div>'+
@@ -1768,6 +1795,7 @@ function renderAssessForm(){
       '<div>'+catHtml+'</div>'+
       '<div class="summary-panel" id="summaryPanel"></div>'+
     '</div>'+
+    photoUploadHtml+
     (canInput ? '<div class="field" style="max-width:300px;margin-top:6px;"><label>Tanggal Penilaian</label><input type="date" id="assessDate" value="'+todayStr()+'"></div>'+
     '<button class="btn btn-primary" id="btnSaveAssessment" style="margin-top:6px;">Simpan Penilaian (Draft Baru)</button>' : '')+
     '<div class="section-title"><h3>Riwayat &amp; Status Persetujuan</h3></div>'+
@@ -1777,7 +1805,43 @@ function renderAssessForm(){
   renderSummaryPanel();
   if(canInput){
     document.getElementById("btnSaveAssessment").addEventListener("click", saveAssessment);
+    const dz = document.getElementById("photoDropzone");
+    const photoInput = document.getElementById("assessPhotoInput");
+    dz.addEventListener("click", ()=> photoInput.click());
+    photoInput.addEventListener("change", ()=>{ addPendingAssessmentPhotos(photoInput.files); photoInput.value = ""; });
+    dz.addEventListener("dragover", (e)=>{ e.preventDefault(); dz.classList.add("dragover"); });
+    dz.addEventListener("dragleave", ()=> dz.classList.remove("dragover"));
+    dz.addEventListener("drop", (e)=>{
+      e.preventDefault(); dz.classList.remove("dragover");
+      addPendingAssessmentPhotos(e.dataTransfer.files);
+    });
   }
+}
+
+const ASSESS_PHOTO_MAX_COUNT = 6;
+const ASSESS_PHOTO_MAX_SIZE = 5 * 1024 * 1024; // 5 MB
+
+function addPendingAssessmentPhotos(fileList){
+  const files = Array.from(fileList||[]);
+  for(const file of files){
+    if(!file.type.startsWith("image/")){ showToast('"'+file.name+'" bukan file gambar, dilewati.', true); continue; }
+    if(file.size > ASSESS_PHOTO_MAX_SIZE){ showToast('"'+file.name+'" melebihi 5 MB, dilewati.', true); continue; }
+    if(pendingAssessmentPhotos.length >= ASSESS_PHOTO_MAX_COUNT){ showToast("Maksimal "+ASSESS_PHOTO_MAX_COUNT+" foto per penilaian.", true); break; }
+    pendingAssessmentPhotos.push(file);
+  }
+  renderPhotoPreview();
+}
+function removePendingPhoto(idx){
+  pendingAssessmentPhotos.splice(idx, 1);
+  renderPhotoPreview();
+}
+function renderPhotoPreview(){
+  const grid = document.getElementById("photoPreviewGrid");
+  if(!grid) return;
+  grid.innerHTML = pendingAssessmentPhotos.map((file, idx)=>{
+    const url = URL.createObjectURL(file);
+    return '<div class="photo-thumb"><img src="'+url+'" alt=""><button type="button" class="photo-thumb-remove" onclick="removePendingPhoto('+idx+')">&times;</button></div>';
+  }).join("");
 }
 
 function workflowStatusOf(h){
@@ -1817,7 +1881,7 @@ function renderHistItem(h){
   return '<div class="hist-item"><div class="hi-left"><b>'+fmtDate(h.tanggal)+'</b> &middot; '+sc.total.toFixed(1)+'% &middot; '+
       '<span class="status-pill status-'+st.key+'" style="margin-left:2px;">'+st.label+'</span> '+
       '<span class="status-pill" style="background:transparent;border:1px solid var(--border);color:'+wf.color+';margin-left:4px;">'+wf.label+'</span>'+
-      '<span>Diinput: '+esc(h.diinputOleh?.nama||"-")+' &middot; Diperiksa: '+esc(h.diperiksaOleh?.nama||"belum")+' &middot; Disetujui: '+esc(h.disetujuiOleh?.nama||"belum")+dikembalikanInfo+'</span></div>'+
+      '<span>Diinput: '+esc(h.diinputOleh?.nama||"-")+' &middot; Diperiksa: '+esc(h.diperiksaOleh?.nama||"belum")+' &middot; Disetujui: '+esc(h.disetujuiOleh?.nama||"belum")+(h.fotos&&h.fotos.length?' &middot; 📷 '+h.fotos.length+' foto':'')+dikembalikanInfo+'</span></div>'+
       actionBtn+
     '</div>';
 }
@@ -1954,26 +2018,53 @@ async function saveAssessment(){
     if(!confirm('Baru '+filledCount+' dari '+DB.params.length+' parameter terisi. Simpan tetap dilanjutkan?')) return;
   }
   const dateVal = document.getElementById("assessDate").value || todayStr();
+  const saveBtn = document.getElementById("btnSaveAssessment");
+  if(saveBtn){ saveBtn.disabled = true; saveBtn.textContent = pendingAssessmentPhotos.length ? "Mengunggah foto..." : "Menyimpan..."; }
+
   const record = {
     id: uid("as"),
     unitId: currentAssessDraft.unitId,
     tanggal: dateVal,
     scores: {...currentAssessDraft.scores},
     notes: {...currentAssessDraft.notes},
+    fotos: [],
     diinputOleh: {nama: currentUser.nama, jabatan: currentUser.jabatan, tanggal: dateVal},
     diperiksaOleh: {nama:"", jabatan:"", tanggal:""},
     disetujuiOleh: {nama:"", jabatan:"", tanggal:""},
     createdBy: currentUser.username,
     createdAt: Date.now()
   };
+
+  if(pendingAssessmentPhotos.length){
+    if(!fbStorageRef){
+      showToast("Foto tidak diunggah - koneksi Firebase Storage tidak aktif. Penilaian tetap disimpan tanpa foto.", true);
+    } else {
+      for(let i=0; i<pendingAssessmentPhotos.length; i++){
+        const file = pendingAssessmentPhotos[i];
+        const safeName = file.name.replace(/[^a-zA-Z0-9_.-]/g, "_");
+        const storagePath = "assessment-photos/"+record.id+"/"+i+"-"+safeName;
+        try{
+          const snap = await fbStorageRef.child(storagePath).put(file, {contentType: file.type});
+          const url = await snap.ref.getDownloadURL();
+          record.fotos.push({url, fileName: file.name, storagePath});
+        }catch(e){
+          console.error("Gagal unggah foto:", e);
+          showToast('Gagal unggah foto "'+file.name+'": '+(e.message||e), true);
+        }
+      }
+    }
+  }
+
   DB.assessments.push(record);
   const ok = await persist("pkm-assessments-v1", DB.assessments);
   if(ok){
     showToast("Penilaian tersimpan sebagai draft, menunggu diperiksa Koordinator.");
+    pendingAssessmentPhotos = [];
     renderAssessForm();
     renderNotifications();
   } else {
     DB.assessments.pop(); // batalkan perubahan di memori supaya tidak duplikat saat dicoba lagi
+    if(saveBtn){ saveBtn.disabled = false; saveBtn.textContent = "Simpan Penilaian (Draft Baru)"; }
   }
 }
 
@@ -2158,6 +2249,10 @@ function renderReportPaper(){
         '<div class="box"><div class="v">'+status.label.toUpperCase()+'</div><div class="l">Status Kesehatan</div></div>'+
       '</div>'+
       '<table><thead><tr><th>No</th><th>Kategori</th><th>Parameter</th><th>Bobot</th><th>Skor</th><th>Catatan</th></tr></thead><tbody>'+detailRows+'</tbody></table>'+
+      (a.fotos && a.fotos.length ?
+        '<div style="font-size:11px;color:#5c6b78;text-transform:uppercase;letter-spacing:.3px;margin:16px 0 8px 0;">Dokumentasi Foto Mesin</div>'+
+        '<div class="report-photo-grid">'+a.fotos.map(f=>'<a href="'+esc(f.url)+'" target="_blank" rel="noopener"><img src="'+esc(f.url)+'" alt="'+esc(f.fileName)+'"></a>').join("")+'</div>'
+        : '')+
       '<div class="rp-sign">'+
         '<div class="sbox">'+
           '<div style="font-size:11px;color:#5c6b78;">DIPERIKSA OLEH (Team Leader UPP)</div>'+
