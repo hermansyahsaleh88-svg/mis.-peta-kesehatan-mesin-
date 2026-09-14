@@ -4,6 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Peta Kesehatan Unit — PLN Nusa Daya ULPT Luwuk</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#F0A83C">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Peta Kesehatan">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
 <script>
 /* Terapkan tema (terang/gelap) sedini mungkin supaya tidak ada kedipan warna saat halaman dimuat */
 (function(){
@@ -201,7 +209,7 @@ tbody tr:hover{background:var(--panel-alt);}
   content:''; position:absolute; inset:200px; border-radius:50%; border:1px dashed var(--border-soft);
 }
 .login-card{
-  position:relative; z-index:2; width:380px; background:var(--panel);
+  position:relative; z-index:2; width:380px; max-width:100%; background:var(--panel);
   border:1px solid var(--border); border-radius:14px; padding:36px 32px; box-shadow:0 30px 80px rgba(0,0,0,.5);
 }
 .login-brand{display:flex;align-items:center;gap:10px;margin-bottom:26px;}
@@ -220,9 +228,12 @@ tbody tr:hover{background:var(--panel-alt);}
 /* ---------- App shell ---------- */
 #appShell{display:none;min-height:100vh;}
 #appShell.active{display:flex;}
+.mobile-topbar{display:none;}
+.sidebar-overlay{display:none;}
 .sidebar{
   width:230px; flex-shrink:0; background:var(--panel); border-right:1px solid var(--border-soft);
   display:flex; flex-direction:column; padding:20px 14px; position:sticky; top:0; height:100vh; overflow-y:auto;
+  transition:transform .25s ease;
 }
 .sb-brand{display:flex;align-items:center;gap:10px;padding:0 8px 20px 8px;border-bottom:1px solid var(--border-soft);margin-bottom:16px;}
 .sb-brand .mark{
@@ -470,12 +481,83 @@ tbody tr:hover{background:var(--panel-alt);}
 .weight-total-line.bad{color:var(--kritis);}
 
 @media (max-width:1000px){
-  .kpi-row{grid-template-columns:repeat(2,1fr);}
+  .kpi-row{grid-template-columns:repeat(3,1fr);}
   .charts-row{grid-template-columns:1fr;}
   .assess-layout{grid-template-columns:1fr;}
   .summary-panel{position:static;}
-  .sidebar{width:190px;}
-  .main{padding:20px;}
+}
+
+/* ============================================================
+   MODE PONSEL (portrait) - sidebar jadi laci geser (off-canvas),
+   dibuka lewat tombol hamburger di topbar atas. Tanpa ini, sidebar
+   230px selalu memakan ruang sehingga layar HP tegak terasa sempit
+   dan "harus landscape baru kelihatan".
+   ============================================================ */
+@media (max-width:768px){
+  body{ -webkit-overflow-scrolling:touch; }
+  .login-card{padding:28px 22px;}
+  #themeToggleBtnLogin{top:12px;right:12px;font-size:11px;padding:7px 10px;}
+
+  .mobile-topbar{
+    display:flex; align-items:center; gap:10px; position:sticky; top:0; z-index:40;
+    background:var(--panel); border-bottom:1px solid var(--border-soft); padding:12px 14px;
+  }
+  .mobile-topbar .mark{
+    width:30px;height:30px;border-radius:8px;background:linear-gradient(145deg,var(--accent),#B96F1E);
+    display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-weight:700;color:#1A1206;font-size:13px;flex-shrink:0;
+  }
+  .mobile-topbar .mt-title{font-size:13px;font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .mobile-menu-btn{
+    background:var(--panel-alt); border:1px solid var(--border); border-radius:8px; width:36px;height:36px;
+    display:flex;align-items:center;justify-content:center;color:var(--text);flex-shrink:0; position:relative;
+  }
+  .mobile-menu-btn svg{width:19px;height:19px;}
+  .mobile-notif-btn{position:relative;}
+
+  #appShell.active{flex-direction:column;}
+  .sidebar{
+    position:fixed; top:0; left:0; height:100%; width:82%; max-width:300px; z-index:60;
+    transform:translateX(-100%); box-shadow:0 0 0 rgba(0,0,0,0);
+  }
+  .sidebar.open{transform:translateX(0); box-shadow:20px 0 60px rgba(0,0,0,.5);}
+  .sidebar-overlay{
+    display:none; position:fixed; inset:0; background:rgba(6,10,14,.6); z-index:55;
+  }
+  .sidebar-overlay.open{display:block;}
+  .notif-wrap{display:none;} /* notifikasi dipindah ke topbar mobile */
+
+  .main{padding:16px 14px 50px 14px;}
+  .page-header h2{font-size:18px;}
+  .page-header{margin-bottom:16px;}
+  .kpi-row{grid-template-columns:repeat(2,1fr); gap:10px;}
+  .kpi-card{padding:12px 14px;}
+  .kpi-card .num{font-size:22px;}
+  .charts-row{gap:12px;}
+  .chart-card{padding:14px;}
+  .heatmap-grid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:10px;}
+
+  .toolbar{gap:8px;}
+  .toolbar input[type=text]{min-width:0; flex:1 1 100%;}
+  .table-wrap{max-height:none;}
+  table{font-size:12px;}
+  th, td{padding:8px 10px;}
+
+  .grid-2, .grid-3{grid-template-columns:1fr;}
+  .modal{padding:20px 18px;}
+  .modal-overlay{padding:12px;}
+
+  .assess-param{grid-template-columns:1fr;}
+  .score-select{margin-top:6px;}
+  .score-btn{width:38px;height:38px;}
+
+  #reportPaper{padding:22px 16px;}
+  #reportPaper .rp-grid{grid-template-columns:1fr;}
+  #reportPaper .rp-total-box{flex-direction:column;}
+  #reportPaper .rp-sign{grid-template-columns:1fr; gap:26px;}
+  .report-select-bar .field{min-width:0; width:100%;}
+  .report-select-bar{flex-direction:column; align-items:stretch;}
+
+  .manual-grid, .photo-preview-grid{grid-template-columns:repeat(2,1fr);}
 }
 </style>
 </head>
@@ -510,7 +592,19 @@ tbody tr:hover{background:var(--panel-alt);}
 
 <!-- ======================= APP SHELL ======================= -->
 <div id="appShell">
-  <aside class="sidebar">
+  <div class="mobile-topbar">
+    <button class="mobile-menu-btn" id="mobileMenuBtn" aria-label="Menu">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+    </button>
+    <div class="mark">PK</div>
+    <div class="mt-title">Peta Kesehatan Unit</div>
+    <button class="mobile-menu-btn mobile-notif-btn" id="mobileNotifBtn" aria-label="Notifikasi">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+      <span class="notif-badge hidden" id="notifBadgeMobile">0</span>
+    </button>
+  </div>
+  <div class="sidebar-overlay" id="sidebarOverlay"></div>
+  <aside class="sidebar" id="sidebarEl">
     <div class="sb-brand">
       <div class="mark">PK</div>
       <div>
@@ -1486,14 +1580,18 @@ function notifTagFor(a){
 
 function renderNotifications(){
   const badge = document.getElementById("notifBadge");
+  const badgeMobile = document.getElementById("notifBadgeMobile");
   const panel = document.getElementById("notifPanel");
   if(!badge || !panel || !currentUser) return;
   const pending = getPendingApprovalsForUser().slice().sort((a,b)=> (a.tanggal||"").localeCompare(b.tanggal||""));
   if(pending.length){
-    badge.textContent = pending.length > 99 ? "99+" : String(pending.length);
+    const label = pending.length > 99 ? "99+" : String(pending.length);
+    badge.textContent = label;
     badge.classList.remove("hidden");
+    if(badgeMobile){ badgeMobile.textContent = label; badgeMobile.classList.remove("hidden"); }
   } else {
     badge.classList.add("hidden");
+    if(badgeMobile) badgeMobile.classList.add("hidden");
   }
   if(!pending.length){
     panel.innerHTML = '<div class="notif-panel-empty">Tidak ada laporan yang menunggu persetujuan Anda.</div>';
@@ -1581,8 +1679,20 @@ function applyRoleVisibility(){
 /* ============================================================
    NAV
    ============================================================ */
+function openMobileSidebar(){
+  document.getElementById("sidebarEl").classList.add("open");
+  document.getElementById("sidebarOverlay").classList.add("open");
+}
+function closeMobileSidebar(){
+  document.getElementById("sidebarEl").classList.remove("open");
+  document.getElementById("sidebarOverlay").classList.remove("open");
+}
+document.getElementById("mobileMenuBtn").addEventListener("click", openMobileSidebar);
+document.getElementById("mobileNotifBtn").addEventListener("click", openMobileSidebar);
+document.getElementById("sidebarOverlay").addEventListener("click", closeMobileSidebar);
+
 document.querySelectorAll(".nav-item[data-view]").forEach(el=>{
-  el.addEventListener("click", ()=> goToView(el.dataset.view));
+  el.addEventListener("click", ()=>{ goToView(el.dataset.view); closeMobileSidebar(); });
 });
 function goToView(name){
   if((name==="bobot" || name==="user" || name==="sync") && currentUser.role!=="admin") return;
@@ -3036,6 +3146,17 @@ function renderSyncView(){
       try{ document.execCommand("copy"); showToast("Kode disalin ke clipboard."); }
       catch(e2){ showToast("Gagal menyalin otomatis - silakan seleksi & salin manual dari kotak kode.", true); }
     }
+  });
+}
+
+/* ============================================================
+   PWA - daftarkan service worker (supaya bisa "Add to Home Screen"
+   / diinstall sebagai app-like di HP). Gagal daftar (mis. dibuka
+   dari file lokal tanpa https) tidak mengganggu jalannya aplikasi.
+   ============================================================ */
+if("serviceWorker" in navigator){
+  window.addEventListener("load", ()=>{
+    navigator.serviceWorker.register("sw.js").catch(()=>{ /* abaikan - aplikasi tetap jalan normal tanpa PWA */ });
   });
 }
 
