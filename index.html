@@ -390,6 +390,7 @@ tbody tr:hover{background:var(--panel-alt);}
 .report-photo-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin:10px 0 18px 0;}
 .report-photo-grid a{display:block;border-radius:6px;overflow:hidden;border:1px solid #d3dbe2;aspect-ratio:1;}
 .report-photo-grid img{width:100%;height:100%;object-fit:cover;display:block;}
+.report-photo-grid a.photo-broken{display:flex;align-items:center;justify-content:center;text-align:center;font-size:11px;color:#8a97a3;background:#f0f3f6;padding:6px;text-decoration:none;}
 
 /* ---------- Modal ---------- */
 .modal-overlay{
@@ -1127,6 +1128,19 @@ async function driveUploadFile(file, folderPath){
   const json = await res.json();
   if(!json || json.success !== true) throw new Error(json && json.error ? json.error : "Upload ke Google Drive gagal");
   return json; // {success, fileId, fileUrl}
+}
+
+async function driveFixSharing(){
+  if(!driveUrl) throw new Error("Google Drive belum tersambung - cek menu Sinkronisasi Data.");
+  const res = await fetch(driveUrl, {
+    method: "POST",
+    headers: {"Content-Type": "text/plain;charset=utf-8"},
+    body: JSON.stringify({action:"fixSharing"})
+  });
+  if(!res.ok) throw new Error("HTTP " + res.status);
+  const json = await res.json();
+  if(!json || json.success !== true) throw new Error(json && json.error ? json.error : "Perbaikan akses gagal");
+  return json; // {success, checked, fixed}
 }
 
 async function driveDeleteFile(fileId){
@@ -2559,7 +2573,7 @@ function renderReportPaper(){
       '<table><thead><tr><th>No</th><th>Kategori</th><th>Parameter</th><th>Bobot</th><th>Skor</th><th>Catatan</th></tr></thead><tbody>'+detailRows+'</tbody></table>'+
       (a.fotos && a.fotos.length ?
         '<div style="font-size:11px;color:#5c6b78;text-transform:uppercase;letter-spacing:.3px;margin:16px 0 8px 0;">Dokumentasi Foto Mesin</div>'+
-        '<div class="report-photo-grid">'+a.fotos.map(f=>'<a href="'+esc(f.url)+'" target="_blank" rel="noopener"><img src="'+esc(f.thumbUrl||f.url)+'" alt="'+esc(f.fileName)+'" loading="lazy"></a>').join("")+'</div>'
+        '<div class="report-photo-grid">'+a.fotos.map(f=>'<a href="'+esc(f.url)+'" target="_blank" rel="noopener" title="'+esc(f.fileName)+'"><img src="'+esc(f.thumbUrl||f.url)+'" alt="" loading="lazy" onerror="this.closest(&quot;a&quot;).innerHTML=&quot;&#128247; Foto tidak bisa dimuat<br><small>klik untuk buka manual</small>&quot;;this.closest(&quot;a&quot;).classList.add(&quot;photo-broken&quot;)"></a>').join("")+'</div>'
         : '')+
       '<div class="rp-sign">'+
         '<div class="sbox">'+
@@ -2944,10 +2958,48 @@ function doPost(e) {
       return jsonResponse_(deleteFile_(body.fileId));
     } else if (body.action === 'export') {
       return jsonResponse_(exportFile_(body.fileId));
+    } else if (body.action === 'fixSharing') {
+      return jsonResponse_(fixSharing_());
     }
     return jsonResponse_({ success: false, error: 'Aksi tidak dikenal' });
   } catch (err) {
     return jsonResponse_({ success: false, error: String(err) });
+  }
+}
+
+function fixSharing_() {
+  // Dipakai untuk memperbaiki file lama yang diupload lewat versi script
+  // sebelum ada file.setSharing() di uploadFile_ - file itu tersimpan
+  // tapi TIDAK bisa dilihat orang lain (makanya foto/dokumen tidak
+  // muncul, hanya nama filenya saja). Fungsi ini memindai semua file
+  // di folder "PetaKesehatanMesin_Files" (termasuk subfolder) dan
+  // membuka akses "Anyone with the link - Viewer" untuk semuanya.
+  try {
+    var root = getRootFolder_();
+    var fixed = 0, checked = 0;
+    var stack = [root];
+    while (stack.length) {
+      var folder = stack.pop();
+      var subfolders = folder.getFolders();
+      while (subfolders.hasNext()) stack.push(subfolders.next());
+      var files = folder.getFiles();
+      while (files.hasNext()) {
+        var file = files.next();
+        checked++;
+        try {
+          var access = file.getSharingAccess();
+          if (access !== DriveApp.Access.ANYONE_WITH_LINK && access !== DriveApp.Access.ANYONE) {
+            file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+            fixed++;
+          }
+        } catch (fileErr) {
+          // lewati file yang gagal diproses, lanjut ke file berikutnya
+        }
+      }
+    }
+    return { success: true, checked: checked, fixed: fixed };
+  } catch (err) {
+    return { success: false, error: String(err) };
   }
 }
 
@@ -3088,6 +3140,9 @@ function renderSyncView(){
       '<div class="field"><label>URL Web App Google Drive (Apps Script)</label>'+
         '<input type="text" id="driveUrlInput" placeholder="https://script.google.com/macros/s/xxxxx/exec" value="'+esc(driveUrl)+'"></div>'+
       '<button class="btn btn-primary" id="btnConnectDrive">Sambungkan</button>'+
+      (driveConnected ? '<button class="btn btn-sm" id="btnFixSharing" style="margin-left:8px;">🛠 Perbaiki Foto/Dokumen yang Tidak Muncul</button>' : '')+
+      (driveConnected ? '<div style="font-size:11.5px;color:var(--text-dim);margin-top:10px;">Kalau ada foto/dokumen yang tampil sebagai nama file/tautan biasa (bukan gambar), biasanya karena file itu diupload lewat kode Apps Script versi lama yang belum membuka akses "Anyone with the link". Klik tombol di atas untuk memindai &amp; membuka akses semua file di Drive secara otomatis. <b>Pastikan dulu kode Apps Script akun ini sudah versi terbaru</b> (salin ulang dari kotak kode di bawah, Deploy &rarr; Manage deployments &rarr; edit (pensil) &rarr; New version &rarr; Deploy) supaya aksi ini dikenali.</div>' : '')+
+      '<div id="fixSharingProgress" style="font-size:12px;color:var(--text-dim);margin-top:10px;"></div>'+
     '</div>'+
 
     '<div class="card" style="margin-bottom:20px;">'+
@@ -3133,6 +3188,27 @@ function renderSyncView(){
   document.getElementById("btnConnectDrive").addEventListener("click", ()=>{
     connectDrive(document.getElementById("driveUrlInput").value);
   });
+  const btnFixSharing = document.getElementById("btnFixSharing");
+  if(btnFixSharing){
+    btnFixSharing.addEventListener("click", async ()=>{
+      const progressEl = document.getElementById("fixSharingProgress");
+      btnFixSharing.disabled = true;
+      btnFixSharing.textContent = "Memindai & memperbaiki akses...";
+      if(progressEl) progressEl.textContent = "Sedang memindai semua file di Google Drive, mohon tunggu...";
+      try{
+        const result = await driveFixSharing();
+        if(progressEl) progressEl.textContent = "Selesai. "+result.checked+" file diperiksa, "+result.fixed+" file diperbaiki aksesnya.";
+        showToast(result.fixed > 0 ? "Berhasil memperbaiki akses "+result.fixed+" file. Muat ulang halaman Laporan untuk melihat perubahan." : "Semua file sudah punya akses yang benar.");
+        await migrateDriveUrls();
+      }catch(e){
+        if(progressEl) progressEl.textContent = "Gagal: "+(e.message||e)+" - pastikan kode Apps Script sudah versi terbaru (salin ulang & deploy ulang).";
+        showToast("Gagal memperbaiki akses: "+(e.message||e), true);
+      }finally{
+        btnFixSharing.disabled = false;
+        btnFixSharing.textContent = "🛠 Perbaiki Foto/Dokumen yang Tidak Muncul";
+      }
+    });
+  }
   document.getElementById("btnStartFileMigration").addEventListener("click", ()=>{
     migrateFilesToNewDrive(document.getElementById("oldDriveUrlInput").value);
   });
